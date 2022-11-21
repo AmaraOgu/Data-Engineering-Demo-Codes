@@ -57,7 +57,6 @@ def stream_tweets():
 
     #specify tweet fields you want to return. see documentation https://developer.twitter.com/en/docs/twitter-api/tweets/volume-streams/api-reference/get-tweets-sample-stream#:~:text=each%20returned%20Tweet.-,Specify%20the%20desired%20fields%20in%20a%20comma%2Dseparated%20list%20without%20spaces%20between%20commas%20and%20fields,-.%20While%20the%20user
     tweet_fields = ['text','created_at','lang','source'] 
-    # tweet_fields = ['source']
 
     # remove existing rules
     rules = stream_obj.get_rules().data
