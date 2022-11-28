@@ -4,34 +4,21 @@ import os
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import GoogleCloudOptions
-from apache_beam.transforms.combiners import CountCombineFn
-
+import time
+from typing import Any, Dict
 
 # Service account key path
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/path/to/service-account.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "path/to/sa-file.json"
 
-input_subscription = "projects/your-project-id/subscriptions/twitter-pipeline-sub"
-output_table_name = "agg_tweets"
-dataset_name = "twitter_data"
-agg_tweets_schema = {
-        "fields": [
-            {
-                "name": "timestamp",
-                "type": "TIMESTAMP"
-            },
-            {
-                "name": "source",
-                "type": "STRING",
-            },
-            {
-                "name": "tweet_count",
-                "type": "INT64",
-            }
-        ]
-    }
+SCHEMA = ",".join(
+    [
+        "processing_time:TIMESTAMP",
+        "source:STRING",
+        "tweet_count:INT64"
+    ]
+)
 
-
-#Initialize argparse
+# #Initialize argparse
 parser = argparse.ArgumentParser()
 
 #Get the project id
@@ -39,70 +26,82 @@ parser.add_argument(
     '--project_id',
     help='Your GCP project ID',
     required=True
-)
-#Get the inout Pub/Sub Subcription
-parser.add_argument(
-    "--input_subscription",
-    help='Input PubSub subscription in the form "projects/YOUR_PROJECT_ID/subscriptions/PUBSUB-SUBSCRIPTION-ID."',
-    required=True
-)
-#Get the Dataset name
-parser.add_argument(
-    "--dataset_name", 
-    help="Output BigQuery Dataset name", 
-    default=dataset_name
-)
-#Get the output BigQuery table name
-parser.add_argument(
-    "--output_table_name", 
-    help="Output BigQuery Table name", 
-    default=output_table_name
-)
+    )
 
-class GetTimestamp(beam.DoFn):
-    def process(self, element, window=beam.DoFn.WindowParam):
-        window_start = window.start.to_utc_datetime().strftime("%Y-%m-%dT%H:%M:%S")
-        output = {'timestamp': window_start,'source': element.source, 'tweet_count': element.tweet_count}
-        yield output
+#Get the input Pub/Sub Subcription
+parser.add_argument(
+        "--input_subscription",
+        help="Input PubSub subscription of the form "
+        '"projects/PROJECT/subscriptions/SUBSCRIPTION_ID."',
+        required=True
+    )
 
+#Get the Bigquery output table
+parser.add_argument(
+        "--output_table",
+        help="Output BigQuery table for results specified as: "
+        "PROJECT:DATASET.TABLE or DATASET.TABLE.",
+        required=True
+    )
+
+#Get the window interval
+parser.add_argument(
+        "--window_interval_sec",
+        default=60,
+        type=int,
+        help="Window interval in seconds for grouping incoming messages.",
+    )
 
 known_args, pipeline_args = parser.parse_known_args()
 
-input_subscription = known_args.input_subscription
-dataset_name = known_args.dataset_name
-output_table_name = known_args.output_table_name
-project_id = 'amara-sandbox-1'
-
 pipeline_options = PipelineOptions(pipeline_args, save_main_session=True, streaming=True)
-pipeline_options.view_as(GoogleCloudOptions).project = project_id
+pipeline_options.view_as(GoogleCloudOptions).project = known_args.project_id
 
-# this function runs the streaming pipeline
-def run():
+def add_processing_time(message) -> Dict[str, Any]:
+    """Parse the input json message and add 'score' & 'processing_time' keys."""
+    row = message
+    return {
+        "source": row['source'],
+        "tweet_count": row['tweet_count'],
+        "processing_time": int(time.time()),
+    }
+
+# this function runs the pipeline
+def run(
+    input_subscription: str,
+    output_table: str,
+    window_interval_sec: int,
+):
     with beam.Pipeline(options=pipeline_options) as p:
         (
         p
         | "Read from PubSub" >> beam.io.ReadFromPubSub(subscription=input_subscription)
-        | "Decode and parse Json" >> beam.Map(lambda element: json.loads(element.decode("utf-8")))
-        | "Events fixed Window" >> beam.WindowInto(beam.window.FixedWindows(60), allowed_lateness=5)
-        | "Source aggregate" >> beam.GroupBy(source=lambda x: x["source"])
-                                    .aggregate_field(lambda x: x["source"], CountCombineFn(), 'tweet_count')
-    
-        | "Add Timestamp" >> beam.ParDo(GetTimestamp())
+        | "Decode and parse Json" >> beam.Map(lambda message: json.loads(message.decode("utf-8")))
+        | "Events fixed Window" >> beam.WindowInto(beam.window.FixedWindows(window_interval_sec), allowed_lateness=5)
+        | "Add source keys" >> beam.WithKeys(lambda msg: msg["source"])
+        | "Group by source" >> beam.GroupByKey()
+        | "Get tweet count">> beam.MapTuple(
+                                lambda source, messages: {
+                                    "source": source,
+                                    "tweet_count": len(messages),
+                                }
+                            )
+        | "Add processing time" >> beam.Map(add_processing_time)
         | "Write to BigQuery" >> beam.io.WriteToBigQuery(
-                                    output_table_name,
-                                    dataset=dataset_name,
-                                    project=known_args.project_id,
-                                    schema=agg_tweets_schema,
+                                    output_table,
+                                    schema=SCHEMA,
                                     create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
                                     write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
                                 )
-            # | beam.Map(print)
         )
 
 
 if __name__ == "__main__":
-    run()
-
+    run(
+        input_subscription=known_args.input_subscription,
+        output_table=known_args.output_table,
+        window_interval_sec=known_args.window_interval_sec
+    )
 
 
 '''
@@ -110,13 +109,13 @@ CLI command to run code
 
  python3 agg_and_write2bq.py \
     --project_id 'PROJECT-ID' \
-    --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" 
+    --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" \
+    --output_table  "PROJECT:DATASET.TABLE or DATASET.TABLE." 
 or 
 python3 agg_and_write2bq.py \
     --project_id 'PROJECT-ID' \
     --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" \
-    --output_table_name "OUTPUT-TABLE-NAME" \
-    --dataset_name "DATASET-NAME" \
+    --output_table  "PROJECT:DATASET.TABLE or DATASET.TABLE." \
     --runner DataflowRunner \
     --temp_location "gs://BUCKET-NAME/temp" \
     --region us-central1
