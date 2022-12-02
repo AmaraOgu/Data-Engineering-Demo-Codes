@@ -1,14 +1,10 @@
 import argparse
 import json
-import os
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import GoogleCloudOptions
 import time
 from typing import Any, Dict
-
-# Service account key path
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/path/to/service-account.json"
 
 SCHEMA = ",".join(
     [
@@ -77,7 +73,8 @@ def run(
         p
         | "Read from PubSub" >> beam.io.ReadFromPubSub(subscription=input_subscription)
         | "Decode and parse Json" >> beam.Map(lambda message: json.loads(message.decode("utf-8")))
-        | "Events fixed Window" >> beam.WindowInto(beam.window.FixedWindows(window_interval_sec), allowed_lateness=5)
+        | "Events fixed Window" >> beam.WindowInto(beam.window.FixedWindows(window_interval_sec), 
+                                                                            allowed_lateness=5)
         | "Add source keys" >> beam.WithKeys(lambda msg: msg["source"])
         | "Group by source" >> beam.GroupByKey()
         | "Get tweet count">> beam.MapTuple(
@@ -103,20 +100,3 @@ if __name__ == "__main__":
         window_interval_sec=known_args.window_interval_sec
     )
 
-
-'''
-CLI command to run code
-
- python3 agg_and_write2bq.py \
-    --project_id 'PROJECT-ID' \
-    --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" \
-    --output_table  "PROJECT:DATASET.TABLE or DATASET.TABLE." 
-or 
-python3 agg_and_write2bq.py \
-    --project_id 'PROJECT-ID' \
-    --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" \
-    --output_table  "PROJECT:DATASET.TABLE or DATASET.TABLE." \
-    --runner DataflowRunner \
-    --temp_location "gs://BUCKET-NAME/temp" \
-    --region us-central1
-'''
