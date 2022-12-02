@@ -9,10 +9,7 @@ from apache_beam.options.pipeline_options import GoogleCloudOptions
 # Service account key path
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/path/to/service-account.json"
 
-input_subscription = "projects/your-project-id/subscriptions/twitter-pipeline-sub"
-output_table_name = "raw_tweets"
-dataset_name = "twitter_data"
-raw_tweets_schema = {
+SCHEMA = {
         "fields": [
             {
                 "name": 'created_at',
@@ -46,58 +43,49 @@ raw_tweets_schema = {
         ]
     }
 
-
-
 #Initialize argparse
 parser = argparse.ArgumentParser()
 
 #Get the project id
 parser.add_argument(
-    '--project_id',
-    help='Your GCP project ID',
+    "--project_id",
+    help="Your GCP project ID",
     required=True
 )
 #Get the inout Pub/Sub Subcription
 parser.add_argument(
     "--input_subscription",
-    help='Input PubSub subscription in the form "projects/YOUR_PROJECT_ID/subscriptions/PUBSUB-SUBSCRIPTION-ID."',
+    help="Input PubSub subscription specified as: "
+    "projects/YOUR_PROJECT_ID/subscriptions/PUBSUB-SUBSCRIPTION-ID.",
     required=True
 )
-#Get the Dataset name
+
+#Get the Bigquery output table
 parser.add_argument(
-    "--dataset_name", 
-    help="Output BigQuery Dataset name", 
-    default=dataset_name
-)
-#Get the output BigQuery table name
-parser.add_argument(
-    "--output_table_name", 
-    help="Output BigQuery Table name", 
-    default=output_table_name
-)
+        "--output_table",
+        help="Output BigQuery table for results specified as: "
+        "PROJECT:DATASET.TABLE or DATASET.TABLE.",
+        required=True
+    )
 
 known_args, pipeline_args = parser.parse_known_args()
 
-input_subscription = known_args.input_subscription
-dataset_name = known_args.dataset_name
-output_table_name = known_args.output_table_name
-project_id = known_args.project_id
-
 pipeline_options = PipelineOptions(pipeline_args, save_main_session=True, streaming=True)
-pipeline_options.view_as(GoogleCloudOptions).project = project_id
+pipeline_options.view_as(GoogleCloudOptions).project = known_args.project_id
 
 # this function runs the streaming pipeline
-def run():
+def run(
+    input_subscription: str,
+    output_table: str,
+):
     with beam.Pipeline(options=pipeline_options) as p:
             (
                 p
                 | "Read from Pub/Sub subscription" >> beam.io.ReadFromPubSub(subscription=input_subscription)
                 | "Decode and parse Json" >> beam.Map(lambda element: json.loads(element.decode("utf-8")))
                 | "Write to BigQuery" >> beam.io.WriteToBigQuery(
-                    output_table_name,
-                    dataset=dataset_name,
-                    project=known_args.project_id,
-                    schema=raw_tweets_schema,
+                    output_table,
+                    schema=SCHEMA,
                     create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
                     write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
                 )
@@ -106,22 +94,27 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    run(input_subscription=known_args.input_subscription,
+        output_table=known_args.output_table
+        )
 
 
 '''
 CLI command to run code
 
  python3 export_to_bq.py \
-    --project_id 'PROJECT-ID' \
-    --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" 
+    --project_id "PROJECT-ID" \
+    --input_subscription "projects/PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" \
+    --output_table  "PROJECT:DATASET.TABLE or DATASET.TABLE." 
+
 or 
+
 python3 export_to_bq.py \
-    --project_id 'PROJECT-ID' \
+    --project_id "PROJECT-ID" \
     --input_subscription "projects/'PROJECT-ID/subscriptions/PUBSUB-SUBSCRIPTION" \
-    --output_table_name "OUTPUT-TABLE-NAME" \
-    --dataset_name "DATASET-NAME" \
+    --output_table  "PROJECT:DATASET.TABLE or DATASET.TABLE." \
     --runner DataflowRunner \
     --temp_location "gs://BUCKET-NAME/temp" \
     --region us-central1
+
 '''
