@@ -3,7 +3,7 @@
 The pipeline used here is a streaming pipeline that reads messages from a Cloud Pub/Sub subscriber, applies a fixed window technique, performs aggregations, and writes the resulting PCollections to a BigQuery table for analytical use.
 
 
-The blog for this code is published on [Medium](https://medium.com/@amarachi.ogu/build-a-streaming-data-pipeline-in-gcp-bd0af69440c9)  
+The blog for this code is published on [Medium](https://medium.com/@amarachi.ogu/deploy-a-reusable-custom-data-pipeline-using-dataflow-flex-template-in-gcp-fb8f40318bad)  
 
 ## File Layout
 ```
