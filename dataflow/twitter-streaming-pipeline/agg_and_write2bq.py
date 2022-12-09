@@ -58,7 +58,7 @@ pipeline_options = PipelineOptions(pipeline_args, save_main_session=True, stream
 pipeline_options.view_as(GoogleCloudOptions).project = known_args.project_id
 
 def add_processing_time(message) -> Dict[str, Any]:
-    """Parse the input json message and add 'score' & 'processing_time' keys."""
+    """Parse the input json message and add 'source', 'tweet_count' & 'processing_time' keys."""
     row = message
     return {
         "source": row['source'],
